@@ -8,24 +8,50 @@ using OrderAccumulator.Infrastructure.Fix;
 using OrderAccumulator.Infrastructure.Persistence;
 using OrderAccumulator.Worker;
 using Serilog;
+using Serilog.Events;
 
-var host = Host.CreateDefaultBuilder(args)
-    .UseSerilog()
-    .ConfigureServices((hostContext, services) =>
-    {
-        var configPath = Path.Combine(AppContext.BaseDirectory, "fix_config.cfg");
+Log.Logger = new LoggerConfiguration()
+    .MinimumLevel.Information()
+    .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
+    .MinimumLevel.Override("System", LogEventLevel.Warning)
+    .Enrich.FromLogContext()
+    .Enrich.WithMachineName()
+    .WriteTo.Console()
+    .WriteTo.File("logs/order-accumulator-.log",
+        rollingInterval: RollingInterval.Day,
+        retainedFileCountLimit: 7)
+    .CreateLogger();
 
-        services.AddSingleton<IExposureRepository, ExposureRepository>();
-        services.AddSingleton<IExposureService, ExposureService>();
-        services.AddSingleton<IOrderHandler, OrderHandler>();
-        services.AddSingleton(sp =>
+try
+{
+    Log.Information("Starting OrderAccumulator Worker...");
+
+    var host = Host.CreateDefaultBuilder(args)
+        .UseSerilog()
+        .ConfigureServices((hostContext, services) =>
         {
-            var orderHandler = sp.GetRequiredService<IOrderHandler>();
-            var logger = sp.GetRequiredService<ILogger<FixAccumulator>>();
-            return new FixAccumulator(orderHandler, logger, configPath);
-        });
-        services.AddHostedService<Worker>();
-    })
-    .Build();
+            var configPath = Path.Combine(AppContext.BaseDirectory, "fix_config.cfg");
 
-await host.RunAsync();
+            services.AddSingleton<IExposureRepository, ExposureRepository>();
+            services.AddSingleton<IExposureService, ExposureService>();
+            services.AddSingleton<IOrderHandler, OrderHandler>();
+            services.AddSingleton(sp =>
+            {
+                var orderHandler = sp.GetRequiredService<IOrderHandler>();
+                var logger = sp.GetRequiredService<ILogger<FixAccumulator>>();
+                return new FixAccumulator(orderHandler, logger, configPath);
+            });
+            services.AddHostedService<Worker>();
+        })
+        .Build();
+
+    await host.RunAsync();
+}
+catch (Exception ex)
+{
+    Log.Fatal(ex, "Worker terminated unexpectedly");
+}
+finally
+{
+    Log.CloseAndFlush();
+}
