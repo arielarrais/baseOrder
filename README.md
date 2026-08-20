@@ -1,26 +1,93 @@
-# Project Empty Template
+# baseOrder
 
-Este é um repositório de exemplo para você começar a desenvolver a questão, leia com atenção os requisitos do enunciado da questão na plataforma e seguia as boas práticas sobre como utilizar este repositório.
+Sistema de envio de ordens financeiras via protocolo FIX 4.4, com arquitetura Clean Architecture/DDD e comunicação síncrona entre OrderGenerator (web) e OrderAccumulator (worker).
 
+> This is a challenge by [Coodesh](https://coodesh.com/)
 
-## Readme do Repositório
+## Stack
 
-- Deve conter o título do projeto
-- Uma descrição sobre o projeto em frase
-- Deve conter uma lista com linguagem, framework e/ou tecnologias usadas
-- Como instalar e usar o projeto (instruções)
-- Não esqueça o [.gitignore](https://www.toptal.com/developers/gitignore)
-- Se está usando github pessoal, referencie que é um challenge by coodesh:  
+- **.NET 8.0** / C# 12
+- **ASP.NET Core Razor Pages** (OrderGenerator.Web)
+- **.NET Worker Service** (OrderAccumulator.Worker)
+- **FIX 4.4** via QuickFIXn 1.14.0
+- **Polly 8** (retry com backoff exponencial)
+- **Serilog** (structured logging, Console + File)
+- **xUnit** (testes unitários)
 
->  This is a challenge by [Coodesh](https://coodesh.com/)
+## Arquitetura
 
-## Finalização e Instruções para a Apresentação
+```
+src/
+├── Shared/
+│   ├── Shared.Domain/              # Value Objects (Money)
+│   └── Shared.Infrastructure/      # Interface IFixClient + QuickFIXn
+├── OrderGenerator/
+│   ├── OrderGenerator.Application/ # OrderService, DTOs, Polly Retry
+│   └── OrderGenerator.Web/         # Razor Pages, FixClient, IdempotencyStore
+├── OrderAccumulator/
+│   ├── OrderAccumulator.Domain/    # Entities (Order, Exposure), Enums, Exceptions
+│   ├── OrderAccumulator.Application/ # OrderHandler, ExposureService
+│   ├── OrderAccumulator.Infrastructure/ # FixAccumulator, ExposureRepository
+│   └── OrderAccumulator.Worker/    # BackgroundService, Program.cs
+└── tests/
+    ├── Shared.Domain.Tests/
+    ├── OrderAccumulator.Domain.Tests/
+    ├── OrderAccumulator.Application.Tests/
+    └── OrderGenerator.Application.Tests/
+```
 
-1. Adicione o link do repositório com a sua solução na questão na plataforma
-2. Verifique se o Readme está bom e faça o commit final em seu repositório;
-3. Envie e aguarde as instruções para seguir. Caso o teste tenha apresentação de vídeo, dentro da tela de entrega será possível gravar após adicionar o link do repositório. Sucesso e boa sorte. =)
+## Como rodar
 
+### Pré-requisitos
 
-## Suporte
+- [.NET 8.0 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
 
-Para tirar dúvidas sobre o processo envie uma mensagem diretamente a um especialista no chat da plataforma. 
+### Build
+
+```bash
+dotnet build baseOrder.slnx
+```
+
+### Rodar o Accumulator (precisa rodar primeiro)
+
+```bash
+dotnet run --project src/OrderAccumulator/OrderAccumulator.Worker
+```
+
+### Rodar o Generator
+
+```bash
+dotnet run --project src/OrderGenerator/OrderGenerator.Web
+```
+
+Acesse: `https://localhost:64749`
+
+### Rodar os testes
+
+```bash
+dotnet test baseOrder.slnx
+```
+
+## Funcionalidades
+
+- Envio de ordens (compra/venda) via formulário web
+- Validação de DTOs (symbol, side, quantity, price)
+- Controle de exposição financeira por símbolo (limite de R$ 100M)
+- Comunicação FIX 4.4 com reconnect automático (5s)
+- **Idempotency Key** (TTL 5s) — previne duplo-clique acidental
+- **Polly Retry** — 3 tentativas com backoff exponencial
+- **Rate Limiting** — 10 req/min por IP
+- **Serilog** — structured logging (Console + File com rolling diário)
+- **Health check** — endpoint `/health`
+- **Métricas** — endpoint `/metrics`
+
+## Segurança
+
+- HTTPS forçado + HSTS
+- Anti-forgery token (Razor Pages padrão)
+- Rate limiter (FixedWindow, 10 req/min)
+- Validação de entrada via DataAnnotations
+
+## Contato
+
+Repositório: https://github.com/arielarrais/baseOrder
