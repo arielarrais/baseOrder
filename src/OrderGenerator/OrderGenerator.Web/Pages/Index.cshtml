@@ -1,0 +1,127 @@
+@page
+@model IndexModel
+@{
+    ViewData["Title"] = "Order Generator";
+}
+
+<div class="page-header">
+    <h1>Order Generator</h1>
+    <p class="subtitle">Envie ordens FIX para o OrderAccumulator em tempo real</p>
+</div>
+
+@if (Model.Response != null)
+{
+    <div class="alert-result @(Model.Response.IsAccepted ? "alert-accepted" : "alert-rejected") mb-4">
+        <div class="alert-result-icon">
+            @(Model.Response.IsAccepted ? "+" : "!")
+        </div>
+        <div class="alert-result-body">
+            <strong>@(Model.Response.IsAccepted ? "Ordem Aceita" : "Ordem Rejeitada")</strong>
+            <span class="alert-message">@Model.Response.Message</span>
+            <div class="alert-time">@Model.Response.Timestamp.ToString("dd/MM/yyyy HH:mm:ss")</div>
+        </div>
+    </div>
+}
+
+<div class="main-grid">
+    <div class="card-dark">
+        <div class="card-header">
+            <h5>
+                <span class="card-header-icon icon-exposure">$</span>
+                Exposicao Financeira
+            </h5>
+            <span class="limit-badge">Limite: R$ @Model.ExposureLimit.ToString("N0")</span>
+        </div>
+        <div class="card-body" style="padding: 0;">
+            <table class="table-exposure">
+                <thead>
+                    <tr>
+                        <th>Simbolo</th>
+                        <th>Exposicao</th>
+                        <th>Utilizacao</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var exp in Model.Exposures)
+                    {
+                        var utilization = Model.ExposureLimit > 0 ? (Math.Abs(exp.Value) / Model.ExposureLimit * 100) : 0;
+                        var barClass = utilization > 80 ? "bar-red" : utilization > 50 ? "bar-yellow" : "bar-green";
+                        <tr>
+                            <td><span class="symbol-badge">@exp.Key</span></td>
+                            <td class="exposure-value @(exp.Value > 0 ? "exposure-positive" : exp.Value < 0 ? "exposure-negative" : "exposure-zero")">
+                                R$ @exp.Value.ToString("N2")
+                            </td>
+                            <td>
+                                <div class="exposure-bar-container">
+                                    <div class="exposure-bar">
+                                        <div class="exposure-bar-fill @barClass" style="width: @utilization.ToString("F1")%"></div>
+                                    </div>
+                                    <span class="exposure-bar-pct">@utilization.ToString("F1")%</span>
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="card-dark">
+        <div class="card-header">
+            <h5>
+                <span class="card-header-icon icon-order">#</span>
+                Nova Ordem
+            </h5>
+        </div>
+        <div class="card-body">
+            <form method="post" class="form-dark">
+                <div class="form-section-label">Parametros</div>
+
+                <div class="row g-3 mb-3">
+                    <div class="col-6">
+                        <label class="form-label">Symbol</label>
+                        <select asp-for="Order.Symbol" class="form-select" required>
+                            <option value="">Selecione</option>
+                            <option value="PETR4">PETR4</option>
+                            <option value="VALE3">VALE3</option>
+                            <option value="VIIA4">VIIA4</option>
+                        </select>
+                        <span asp-validation-for="Order.Symbol" class="text-danger"></span>
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label">Side</label>
+                        <select asp-for="Order.Side" class="form-select" required>
+                            <option value="">Selecione</option>
+                            <option value="Compra">Compra</option>
+                            <option value="Venda">Venda</option>
+                        </select>
+                        <span asp-validation-for="Order.Side" class="text-danger"></span>
+                    </div>
+                </div>
+
+                <div class="row g-3 mb-4">
+                    <div class="col-6">
+                        <label class="form-label">Quantidade</label>
+                        <input asp-for="Order.Quantity" type="number" class="form-control"
+                               placeholder="0" min="1" max="99999" required />
+                        <span asp-validation-for="Order.Quantity" class="text-danger"></span>
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label">Preco</label>
+                        <input asp-for="Order.Price" type="number" step="0.01" class="form-control"
+                               placeholder="0.00" min="0.01" max="999.99" required />
+                        <span asp-validation-for="Order.Price" class="text-danger"></span>
+                    </div>
+                </div>
+
+                <button type="submit" class="btn btn-send w-100">
+                    Enviar Ordem
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+}

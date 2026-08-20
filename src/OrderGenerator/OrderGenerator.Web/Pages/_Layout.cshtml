@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>@ViewData["Title"] - Order Generator</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <style>
+:root{--bg-primary:#0a0e17;--bg-secondary:#111827;--bg-card:#1a2234;--bg-card-hover:#1f2a40;--border-color:#2a3548;--text-primary:#e2e8f0;--text-secondary:#8892a4;--text-muted:#5a6577;--accent-blue:#3b82f6;--accent-blue-hover:#2563eb;--accent-green:#10b981;--accent-green-bg:rgba(16,185,129,0.1);--accent-red:#ef4444;--accent-red-bg:rgba(239,68,68,0.1);--accent-yellow:#f59e0b;--accent-yellow-bg:rgba(245,158,11,0.1);--shadow:0 4px 24px rgba(0,0,0,0.3);--radius:12px;--radius-sm:8px}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background-color:var(--bg-primary);color:var(--text-primary);font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;min-height:100vh}
+.navbar-custom{background:linear-gradient(135deg,#111827 0%,#1a2234 100%);border-bottom:1px solid var(--border-color);padding:0.75rem 0;backdrop-filter:blur(10px)}
+.navbar-brand{font-weight:700;font-size:1.25rem;letter-spacing:-0.5px;color:var(--text-primary)!important;display:flex;align-items:center;gap:0.5rem;text-decoration:none}
+.navbar-brand .brand-icon{width:32px;height:32px;background:linear-gradient(135deg,var(--accent-blue) 0%,#8b5cf6 100%);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:0.875rem;font-weight:800;color:white}
+.navbar-status{display:flex;align-items:center;gap:0.5rem;font-size:0.8rem;color:var(--text-secondary)}
+.status-dot{width:8px;height:8px;border-radius:50%;background:var(--accent-green);animation:pulse 2s ease-in-out infinite}
+.status-dot.disconnected{background:var(--accent-red);animation:none}
+@@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}
+.page-header{margin-bottom:2rem}
+.page-header h1{font-size:1.75rem;font-weight:700;letter-spacing:-0.5px;margin-bottom:0.25rem}
+.page-header .subtitle{color:var(--text-secondary);font-size:0.9rem}
+.card-dark{background:var(--bg-card);border:1px solid var(--border-color);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;transition:border-color 0.2s}
+.card-dark:hover{border-color:#3a4558}
+.card-dark .card-header{background:transparent;border-bottom:1px solid var(--border-color);padding:1rem 1.25rem;display:flex;align-items:center;justify-content:space-between}
+.card-dark .card-header h5{font-size:0.95rem;font-weight:600;margin:0;display:flex;align-items:center;gap:0.5rem}
+.card-dark .card-body{padding:1.25rem}
+.card-header-icon{width:28px;height:28px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;font-size:0.8rem}
+.icon-exposure{background:var(--accent-green-bg);color:var(--accent-green)}
+.icon-order{background:rgba(59,130,246,0.1);color:var(--accent-blue)}
+.limit-badge{font-size:0.75rem;font-weight:500;color:var(--text-secondary);background:rgba(255,255,255,0.05);padding:0.25rem 0.75rem;border-radius:20px;border:1px solid var(--border-color)}
+.table-exposure{margin:0}
+.table-exposure thead th{background:transparent;color:var(--text-secondary);font-weight:500;font-size:0.8rem;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid var(--border-color);padding:0.75rem 1rem}
+.table-exposure tbody td{border-bottom:1px solid var(--border-color);padding:1rem;vertical-align:middle;color:var(--text-primary)}
+.table-exposure tbody tr:last-child td{border-bottom:none}
+.table-exposure tbody tr{transition:background 0.15s}
+.table-exposure tbody tr:hover{background:var(--bg-card-hover)}
+.symbol-badge{font-weight:700;font-size:0.9rem;letter-spacing:0.5px;color:var(--text-primary)}
+.exposure-value{font-weight:600;font-size:0.95rem;font-variant-numeric:tabular-nums}
+.exposure-positive{color:var(--accent-green)}
+.exposure-negative{color:var(--accent-red)}
+.exposure-zero{color:var(--text-muted)}
+.exposure-bar-container{display:flex;align-items:center;gap:0.75rem}
+.exposure-bar{flex:1;height:6px;background:rgba(255,255,255,0.05);border-radius:3px;overflow:hidden}
+.exposure-bar-fill{height:100%;border-radius:3px;transition:width 0.5s ease}
+.bar-green{background:var(--accent-green)}
+.bar-yellow{background:var(--accent-yellow)}
+.bar-red{background:var(--accent-red)}
+.exposure-bar-pct{font-size:0.75rem;font-weight:500;color:var(--text-secondary);min-width:40px;text-align:right;font-variant-numeric:tabular-nums}
+.form-section-label{font-size:0.75rem;font-weight:600;text-transform:uppercase;letter-spacing:0.75px;color:var(--text-muted);margin-bottom:1rem;padding-bottom:0.5rem;border-bottom:1px solid var(--border-color)}
+.form-dark .form-label{font-size:0.8rem;font-weight:500;color:var(--text-secondary);margin-bottom:0.4rem}
+.form-dark .form-control,.form-dark .form-select{background:var(--bg-primary);border:1px solid var(--border-color);color:var(--text-primary);border-radius:var(--radius-sm);padding:0.625rem 0.875rem;font-size:0.9rem;transition:border-color 0.2s,box-shadow 0.2s}
+.form-dark .form-control:focus,.form-dark .form-select:focus{background:var(--bg-primary);border-color:var(--accent-blue);color:var(--text-primary);box-shadow:0 0 0 3px rgba(59,130,246,0.15)}
+.form-dark .form-select option{background:var(--bg-card);color:var(--text-primary)}
+.form-dark .form-control::placeholder{color:var(--text-muted)}
+.form-dark .text-danger{font-size:0.78rem;margin-top:0.25rem}
+.btn-send{background:linear-gradient(135deg,var(--accent-blue) 0%,#2563eb 100%);border:none;color:white;font-weight:600;font-size:0.9rem;padding:0.7rem 2rem;border-radius:var(--radius-sm);letter-spacing:0.3px;transition:all 0.2s;box-shadow:0 2px 8px rgba(59,130,246,0.3)}
+.btn-send:hover{background:linear-gradient(135deg,var(--accent-blue-hover) 0%,#1d4ed8 100%);transform:translateY(-1px);box-shadow:0 4px 16px rgba(59,130,246,0.4);color:white}
+.btn-send:active{transform:translateY(0)}
+.btn-send:disabled{opacity:0.5;transform:none;box-shadow:none}
+.alert-result{border-radius:var(--radius);padding:1rem 1.25rem;display:flex;align-items:flex-start;gap:0.75rem;border:none;animation:slideIn 0.3s ease}
+@@keyframes slideIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
+.alert-accepted{background:var(--accent-green-bg);border:1px solid rgba(16,185,129,0.2);color:var(--accent-green)}
+.alert-rejected{background:var(--accent-red-bg);border:1px solid rgba(239,68,68,0.2);color:var(--accent-red)}
+.alert-result-icon{width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.75rem;font-weight:700;flex-shrink:0;margin-top:1px}
+.alert-accepted .alert-result-icon{background:rgba(16,185,129,0.2)}
+.alert-rejected .alert-result-icon{background:rgba(239,68,68,0.2)}
+.alert-result-body strong{display:block;font-size:0.9rem;margin-bottom:0.15rem}
+.alert-result-body .alert-message{font-size:0.82rem;opacity:0.85}
+.alert-result-body .alert-time{font-size:0.75rem;opacity:0.6;margin-top:0.25rem}
+.footer-custom{border-top:1px solid var(--border-color);padding:1.5rem 0;margin-top:3rem;color:var(--text-muted);font-size:0.8rem}
+.main-grid{display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;align-items:start}
+@@media(max-width:768px){.main-grid{grid-template-columns:1fr}}
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-track{background:var(--bg-primary)}
+::-webkit-scrollbar-thumb{background:var(--border-color);border-radius:3px}
+    </style>
+</head>
+<body>
+    <nav class="navbar-custom">
+        <div class="container d-flex align-items-center justify-content-between">
+            <a class="navbar-brand" href="/">
+                <span class="brand-icon">OG</span>
+                Order Generator
+            </a>
+            <div class="navbar-status">
+                <span class="status-dot"></span>
+                <span>FIX Session Active</span>
+            </div>
+        </div>
+    </nav>
+
+    <main class="container" style="padding-top: 2rem; padding-bottom: 2rem;">
+        @RenderBody()
+    </main>
+
+    <footer class="container footer-custom">
+        <p class="mb-0">Order Generator &mdash; FIX 4.4 Trading System</p>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.0/jquery.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery-validate/1.20.0/jquery.validate.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery-validation-unobtrusive/4.0.0/jquery.validate.unobtrusive.min.js"></script>
+    @await RenderSectionAsync("Scripts", required: false)
+</body>
+</html>

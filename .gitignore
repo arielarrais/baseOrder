@@ -1,0 +1,34 @@
+## Visual Studio
+.vs/
+
+## Build output
+bin/
+obj/
+
+## QuickFIXn
+store/
+log/
+
+## User-specific files
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+## NuGet
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+*.nupkg
+**/packages/repositories.config
+
+## Rider
+.idea/
+*.sln.iml
+
+## macOS
+.DS_Store
+
+## Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
