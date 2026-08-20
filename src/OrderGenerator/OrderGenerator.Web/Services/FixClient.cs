@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Microsoft.Extensions.Logging;
 using QuickFix;
 using QuickFix.Fields;
 using QuickFix.Logger;
@@ -13,18 +14,20 @@ public class FixClient : IFixClient
     private readonly SocketInitiator _initiator;
     private readonly SessionID _sessionId;
     private readonly FixClientHandler _handler;
+    private readonly ILogger<FixClient> _logger;
     private bool _disposed;
 
     public bool IsConnected => _initiator?.IsLoggedOn ?? false;
 
-    public FixClient(string configPath)
+    public FixClient(string configPath, ILogger<FixClient> logger)
     {
+        _logger = logger;
         var settings = new SessionSettings(configPath);
         var storeFactory = new FileStoreFactory(settings);
         var logFactory = new FileLogFactory(settings);
         var messageFactory = new QuickFix.FIX44.MessageFactory();
 
-        _handler = new FixClientHandler();
+        _handler = new FixClientHandler(logger);
         _initiator = new SocketInitiator(_handler, storeFactory, settings, logFactory, messageFactory);
         _sessionId = settings.GetSessions().First();
     }
@@ -32,11 +35,13 @@ public class FixClient : IFixClient
     public void Connect()
     {
         _initiator.Start();
+        _logger.LogInformation("FIX Initiator connecting to {Session}", _sessionId);
     }
 
     public void Disconnect()
     {
         _initiator.Stop();
+        _logger.LogInformation("FIX Initiator disconnected");
     }
 
     public async Task<FixResponse> SendNewOrderSingleAndWaitAsync(
@@ -64,6 +69,8 @@ public class FixClient : IFixClient
         if (session != null && session.IsLoggedOn)
         {
             session.Send(order);
+            _logger.LogInformation("Order sent: ClOrdId={ClOrdId} {Symbol} {Side} {Qty} @ {Price}",
+                clOrdId, symbol, side.getValue(), quantity, price);
         }
         else
         {
@@ -89,13 +96,19 @@ public class FixClient : IFixClient
 internal class FixClientHandler : IApplication
 {
     private readonly ConcurrentDictionary<string, TaskCompletionSource<FixResponse>> _pendingOrders = new();
+    private readonly ILogger _logger;
+
+    public FixClientHandler(ILogger logger)
+    {
+        _logger = logger;
+    }
 
     public void FromApp(Message message, SessionID sessionID)
     {
         try
         {
             var msgType = message.Header.GetString(Tags.MsgType);
-            Console.WriteLine($"[FixClient] FromApp MsgType={msgType} Session={sessionID}");
+            _logger.LogDebug("FIX FromApp MsgType={MsgType} Session={Session}", msgType, sessionID);
 
             if (msgType == MsgType.EXECUTION_REPORT)
             {
@@ -105,19 +118,19 @@ internal class FixClientHandler : IApplication
                 }
                 else
                 {
-                    Console.WriteLine($"[FixClient] ExecutionReport received but not typed as FIX44. Actual type: {message.GetType().FullName}");
                     var rawClOrdId = message.GetString(Tags.ClOrdID);
                     var rawExecType = message.GetString(Tags.ExecType);
                     var isAccepted = rawExecType == "0";
                     var rejectReason = message.IsSetField(Tags.Text) ? message.GetString(Tags.Text) : null;
-                    Console.WriteLine($"[FixClient] Raw fields: ClOrdId={rawClOrdId} ExecType={rawExecType} Accepted={isAccepted}");
+                    _logger.LogWarning("ExecutionReport not typed as FIX44. ClOrdId={ClOrdId} ExecType={ExecType}",
+                        rawClOrdId, rawExecType);
                     HandleRawExecutionReport(rawClOrdId, isAccepted, rejectReason);
                 }
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[FixClient] FromApp error: {ex}");
+            _logger.LogError(ex, "FIX FromApp error");
         }
     }
 
@@ -128,13 +141,14 @@ internal class FixClientHandler : IApplication
         var isAccepted = execType == ExecType.NEW;
         var rejectReason = message.IsSetField(Tags.Text) ? message.Text.Value : null;
 
-        Console.WriteLine($"[FixClient] ExecutionReport ClOrdId={clOrdId} ExecType={execType} Accepted={isAccepted}");
+        _logger.LogInformation("ExecutionReport: ClOrdId={ClOrdId} ExecType={ExecType} Accepted={Accepted}",
+            clOrdId, execType, isAccepted);
         ResolvePendingOrder(clOrdId, isAccepted, rejectReason);
     }
 
     private void HandleRawExecutionReport(string clOrdId, bool isAccepted, string? rejectReason)
     {
-        Console.WriteLine($"[FixClient] Raw ExecutionReport ClOrdId={clOrdId} Accepted={isAccepted}");
+        _logger.LogWarning("Raw ExecutionReport: ClOrdId={ClOrdId} Accepted={Accepted}", clOrdId, isAccepted);
         ResolvePendingOrder(clOrdId, isAccepted, rejectReason);
     }
 
@@ -143,11 +157,12 @@ internal class FixClientHandler : IApplication
         if (_pendingOrders.TryRemove(clOrdId, out var tcs))
         {
             tcs.TrySetResult(new FixResponse(isAccepted, rejectReason));
-            Console.WriteLine($"[FixClient] TCS completed for ClOrdId={clOrdId}");
+            _logger.LogDebug("TCS completed for ClOrdId={ClOrdId}", clOrdId);
         }
         else
         {
-            Console.WriteLine($"[FixClient] No pending order for ClOrdId={clOrdId}. Pending count={_pendingOrders.Count}");
+            _logger.LogWarning("No pending order for ClOrdId={ClOrdId}. PendingCount={Count}",
+                clOrdId, _pendingOrders.Count);
         }
     }
 

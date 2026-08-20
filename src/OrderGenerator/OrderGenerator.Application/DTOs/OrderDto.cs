@@ -18,6 +18,8 @@ public class OrderDto
     [Range(0.01, 999.99, ErrorMessage = "Price must be between 0.01 and 999.99")]
     [RegularExpression(@"^\d+(\.\d{1,2})?$", ErrorMessage = "Price must be a multiple of 0.01")]
     public decimal Price { get; set; }
+
+    public string? IdempotencyKey { get; set; }
 }
 
 public class OrderResponseDto

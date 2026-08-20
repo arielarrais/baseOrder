@@ -1,22 +1,22 @@
 <Solution>
-  <Folder Name="src\Shared">
-    <Project Path="src\Shared\Shared.Domain\Shared.Domain.csproj" />
-    <Project Path="src\Shared\Shared.Infrastructure\Shared.Infrastructure.csproj" />
+  <Folder Name="/src/Shared/">
+    <Project Path="src/Shared/Shared.Domain/Shared.Domain.csproj" />
+    <Project Path="src/Shared/Shared.Infrastructure/Shared.Infrastructure.csproj" />
   </Folder>
-  <Folder Name="src\OrderAccumulator">
-    <Project Path="src\OrderAccumulator\OrderAccumulator.Domain\OrderAccumulator.Domain.csproj" />
-    <Project Path="src\OrderAccumulator\OrderAccumulator.Application\OrderAccumulator.Application.csproj" />
-    <Project Path="src\OrderAccumulator\OrderAccumulator.Infrastructure\OrderAccumulator.Infrastructure.csproj" />
-    <Project Path="src\OrderAccumulator\OrderAccumulator.Worker\OrderAccumulator.Worker.csproj" />
+  <Folder Name="/src/OrderAccumulator/">
+    <Project Path="src/OrderAccumulator/OrderAccumulator.Domain/OrderAccumulator.Domain.csproj" />
+    <Project Path="src/OrderAccumulator/OrderAccumulator.Application/OrderAccumulator.Application.csproj" />
+    <Project Path="src/OrderAccumulator/OrderAccumulator.Infrastructure/OrderAccumulator.Infrastructure.csproj" />
+    <Project Path="src/OrderAccumulator/OrderAccumulator.Worker/OrderAccumulator.Worker.csproj" />
   </Folder>
-  <Folder Name="src\OrderGenerator">
-    <Project Path="src\OrderGenerator\OrderGenerator.Application\OrderGenerator.Application.csproj" />
-    <Project Path="src\OrderGenerator\OrderGenerator.Web\OrderGenerator.Web.csproj" />
+  <Folder Name="/src/OrderGenerator/">
+    <Project Path="src/OrderGenerator/OrderGenerator.Application/OrderGenerator.Application.csproj" />
+    <Project Path="src/OrderGenerator/OrderGenerator.Web/OrderGenerator.Web.csproj" />
   </Folder>
-  <Folder Name="tests">
-    <Project Path="tests\Shared.Domain.Tests\Shared.Domain.Tests.csproj" />
-    <Project Path="tests\OrderAccumulator.Domain.Tests\OrderAccumulator.Domain.Tests.csproj" />
-    <Project Path="tests\OrderAccumulator.Application.Tests\OrderAccumulator.Application.Tests.csproj" />
-    <Project Path="tests\OrderGenerator.Application.Tests\OrderGenerator.Application.Tests.csproj" />
+  <Folder Name="/tests/">
+    <Project Path="tests/Shared.Domain.Tests/Shared.Domain.Tests.csproj" />
+    <Project Path="tests/OrderAccumulator.Domain.Tests/OrderAccumulator.Domain.Tests.csproj" />
+    <Project Path="tests/OrderAccumulator.Application.Tests/OrderAccumulator.Application.Tests.csproj" />
+    <Project Path="tests/OrderGenerator.Application.Tests/OrderGenerator.Application.Tests.csproj" />
   </Folder>
 </Solution>
