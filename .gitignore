@@ -9,6 +9,9 @@ obj/
 store/
 log/
 
+## Serilog
+logs/
+
 ## User-specific files
 *.user
 *.suo
