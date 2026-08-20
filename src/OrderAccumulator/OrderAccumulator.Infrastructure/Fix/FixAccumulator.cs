@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
 using OrderAccumulator.Application.Interfaces;
 using OrderAccumulator.Domain.Enums;
@@ -14,7 +15,11 @@ public class FixAccumulator : MessageCracker, IApplication, IDisposable
     private readonly IOrderHandler _orderHandler;
     private readonly ILogger<FixAccumulator> _logger;
     private readonly ThreadedSocketAcceptor _acceptor;
+    private readonly ConcurrentDictionary<string, TaskCompletionSource<OrderResult>> _pendingOrders = new();
+    private readonly SessionID _sessionId;
     private bool _disposed;
+
+    public bool IsConnected => _acceptor?.IsStarted ?? false;
 
     public FixAccumulator(
         IOrderHandler orderHandler,
@@ -30,6 +35,7 @@ public class FixAccumulator : MessageCracker, IApplication, IDisposable
         var messageFactory = new QuickFix.FIX44.MessageFactory();
 
         _acceptor = new ThreadedSocketAcceptor(this, storeFactory, settings, logFactory, messageFactory);
+        _sessionId = settings.GetSessions().First();
     }
 
     public void Start()
@@ -42,6 +48,66 @@ public class FixAccumulator : MessageCracker, IApplication, IDisposable
     {
         _acceptor.Stop();
         _logger.LogInformation("FIX Acceptor stopped");
+    }
+
+    public async Task<OrderResult> SendOrderAndWaitAsync(
+        string clOrdId,
+        Domain.Enums.Symbol symbol,
+        Domain.Enums.Side side,
+        int quantity,
+        decimal price,
+        TimeSpan timeout)
+    {
+        var tcs = new TaskCompletionSource<OrderResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _pendingOrders[clOrdId] = tcs;
+
+        var cts = new CancellationTokenSource(timeout);
+        cts.Token.Register(() =>
+        {
+            if (_pendingOrders.TryRemove(clOrdId, out var pending))
+                pending.TrySetResult(new OrderResult
+                {
+                    IsAccepted = false,
+                    ClOrdId = clOrdId,
+                    RejectReason = "FIX response timeout",
+                    Timestamp = DateTime.Now
+                });
+            cts.Dispose();
+        });
+
+        var session = Session.LookupSession(_sessionId);
+        if (session == null || !session.IsLoggedOn)
+        {
+            if (_pendingOrders.TryRemove(clOrdId, out var failed))
+                failed.TrySetResult(new OrderResult
+                {
+                    IsAccepted = false,
+                    ClOrdId = clOrdId,
+                    RejectReason = "FIX session not logged on",
+                    Timestamp = DateTime.Now
+                });
+            return await tcs.Task;
+        }
+
+        var fixSide = side == Domain.Enums.Side.Buy
+            ? new QuickFix.Fields.Side(QuickFix.Fields.Side.BUY)
+            : new QuickFix.Fields.Side(QuickFix.Fields.Side.SELL);
+
+        var order = new QuickFix.FIX44.NewOrderSingle();
+        order.SetField(new ClOrdID(clOrdId));
+        order.SetField(new QuickFix.Fields.Symbol(symbol.ToString()));
+        order.SetField(fixSide);
+        order.SetField(new TransactTime());
+        order.SetField(new OrdType(OrdType.LIMIT));
+        order.SetField(new OrderQty(quantity));
+        order.SetField(new Price(price));
+        order.SetField(new TimeInForce(TimeInForce.GOOD_TILL_CANCEL));
+
+        session.Send(order);
+        _logger.LogInformation("FIX order sent: {ClOrdId} {Symbol} {Side} {Qty} @ {Price}",
+            clOrdId, symbol, side, quantity, price);
+
+        return await tcs.Task;
     }
 
     public void OnMessage(QuickFix.FIX44.NewOrderSingle message, SessionID sessionID)
@@ -62,6 +128,12 @@ public class FixAccumulator : MessageCracker, IApplication, IDisposable
 
             var result = _orderHandler.HandleNewOrderAsync(
                 clOrdId, symbol, side, quantity, price).GetAwaiter().GetResult();
+
+            if (_pendingOrders.TryRemove(clOrdId, out var tcs))
+            {
+                tcs.TrySetResult(result);
+                _logger.LogDebug("Internal pending order resolved for {ClOrdId}", clOrdId);
+            }
 
             SendExecutionReport(sessionID, message, result);
         }

@@ -1,18 +1,26 @@
+using System.Collections.Concurrent;
+using System.Text.Json;
 using OrderGenerator.Application.DTOs;
 using Polly;
 using Polly.Retry;
+using Shared.Domain.Events;
 using Shared.Infrastructure.Fix;
+using Shared.Infrastructure.Messaging;
 
 namespace OrderGenerator.Application.Services;
 
 public class OrderService : IOrderService
 {
     private readonly IFixClient _fixClient;
+    private readonly IEventBroker _eventBroker;
     private readonly ResiliencePipeline _retryPipeline;
 
-    public OrderService(IFixClient fixClient)
+    private static readonly ConcurrentDictionary<string, OrderStatus> _orderStatuses = new();
+
+    public OrderService(IFixClient fixClient, IEventBroker eventBroker)
     {
         _fixClient = fixClient ?? throw new ArgumentNullException(nameof(fixClient));
+        _eventBroker = eventBroker ?? throw new ArgumentNullException(nameof(eventBroker));
 
         _retryPipeline = new ResiliencePipelineBuilder()
             .AddRetry(new RetryStrategyOptions
@@ -35,51 +43,84 @@ public class OrderService : IOrderService
 
     public async Task<OrderResponseDto> SendOrderAsync(OrderDto order)
     {
-        try
+        var orderId = Guid.NewGuid().ToString("N")[..20];
+
+        // Set status to Pending immediately
+        _orderStatuses[orderId] = new OrderStatus
         {
-            if (!_fixClient.IsConnected)
-            {
-                return new OrderResponseDto
-                {
-                    IsAccepted = false,
-                    RejectReason = "FIX client not connected",
-                    Timestamp = DateTime.UtcNow
-                };
-            }
+            OrderId = orderId,
+            Symbol = order.Symbol,
+            Side = order.Side,
+            Quantity = order.Quantity,
+            Price = order.Price,
+            Status = "Pending",
+            Timestamp = DateTime.Now
+        };
 
-            var result = await _retryPipeline.ExecuteAsync(async ct =>
-            {
-                if (!_fixClient.IsConnected)
-                    throw new InvalidOperationException("FIX session not connected");
-
-                var side = order.Side == "Compra"
-                    ? new QuickFix.Fields.Side(QuickFix.Fields.Side.BUY)
-                    : new QuickFix.Fields.Side(QuickFix.Fields.Side.SELL);
-
-                return await _fixClient.SendNewOrderSingleAndWaitAsync(
-                    order.Symbol,
-                    side,
-                    order.Quantity,
-                    order.Price,
-                    TimeSpan.FromSeconds(10));
-            });
-
-            return new OrderResponseDto
-            {
-                IsAccepted = result.IsAccepted,
-                ClOrdId = "N/A",
-                RejectReason = result.RejectReason,
-                Timestamp = DateTime.UtcNow
-            };
-        }
-        catch (Exception ex)
+        // Publish event (fire and forget - async)
+        var evt = new OrderCreatedEvent
         {
-            return new OrderResponseDto
-            {
-                IsAccepted = false,
-                RejectReason = ex.Message,
-                Timestamp = DateTime.UtcNow
-            };
+            OrderId = orderId,
+            Symbol = order.Symbol,
+            Side = order.Side,
+            Quantity = order.Quantity,
+            Price = order.Price
+        };
+
+        await _eventBroker.PublishAsync("orders.created", evt);
+
+        return new OrderResponseDto
+        {
+            IsAccepted = false,
+            ClOrdId = orderId,
+            RejectReason = null,
+            Status = "Pending",
+            Timestamp = DateTime.Now
+        };
+    }
+
+    public async Task<OrderStatus?> GetOrderStatusAsync(string orderId)
+    {
+        if (_orderStatuses.TryGetValue(orderId, out var status))
+            return status;
+
+        return null;
+    }
+
+    public void UpdateOrderStatus(string orderId, OrderProcessedEvent evt)
+    {
+        if (_orderStatuses.TryGetValue(orderId, out var status))
+        {
+            status.Status = evt.IsAccepted ? "Accepted" : "Rejected";
+            status.RejectReason = evt.RejectReason;
+            status.CurrentExposure = evt.CurrentExposure;
+            status.ProcessedAt = evt.ProcessedAt;
         }
     }
+
+    public static void InitializeFromEvent(OrderProcessedEvent evt)
+    {
+        _orderStatuses[evt.OrderId] = new OrderStatus
+        {
+            OrderId = evt.OrderId,
+            Status = evt.IsAccepted ? "Accepted" : "Rejected",
+            RejectReason = evt.RejectReason,
+            CurrentExposure = evt.CurrentExposure,
+            ProcessedAt = evt.ProcessedAt
+        };
+    }
+}
+
+public class OrderStatus
+{
+    public string OrderId { get; set; } = string.Empty;
+    public string? Symbol { get; set; }
+    public string? Side { get; set; }
+    public int Quantity { get; set; }
+    public decimal Price { get; set; }
+    public string Status { get; set; } = "Pending";
+    public string? RejectReason { get; set; }
+    public decimal CurrentExposure { get; set; }
+    public DateTime Timestamp { get; set; }
+    public DateTime? ProcessedAt { get; set; }
 }

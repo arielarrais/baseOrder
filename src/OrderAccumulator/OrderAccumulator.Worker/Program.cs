@@ -9,6 +9,7 @@ using OrderAccumulator.Infrastructure.Persistence;
 using OrderAccumulator.Worker;
 using Serilog;
 using Serilog.Events;
+using Shared.Infrastructure.Messaging;
 
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
@@ -35,6 +36,14 @@ try
             services.AddSingleton<IExposureRepository, ExposureRepository>();
             services.AddSingleton<IExposureService, ExposureService>();
             services.AddSingleton<IOrderHandler, OrderHandler>();
+            services.AddSingleton<IEventBroker>(sp =>
+            {
+                var host = Environment.GetEnvironmentVariable("RABBITMQ_HOST") ?? "localhost";
+                var port = int.Parse(Environment.GetEnvironmentVariable("RABBITMQ_PORT") ?? "5672");
+                var user = Environment.GetEnvironmentVariable("RABBITMQ_USER") ?? "guest";
+                var pass = Environment.GetEnvironmentVariable("RABBITMQ_PASS") ?? "guest";
+                return new RabbitMQEventBroker(host, port, user, pass);
+            });
             services.AddSingleton(sp =>
             {
                 var orderHandler = sp.GetRequiredService<IOrderHandler>();
@@ -42,6 +51,7 @@ try
                 return new FixAccumulator(orderHandler, logger, configPath);
             });
             services.AddHostedService<Worker>();
+            services.AddHostedService<EventConsumerService>();
         })
         .Build();
 

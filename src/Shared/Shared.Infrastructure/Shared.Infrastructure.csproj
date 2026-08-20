@@ -9,6 +9,7 @@
   <ItemGroup>
     <PackageReference Include="QuickFIXn.Core" Version="1.14.0" />
     <PackageReference Include="QuickFIXn.FIX44" Version="1.14.0" />
+    <PackageReference Include="RabbitMQ.Client" Version="6.8.1" />
   </ItemGroup>
 
   <ItemGroup>

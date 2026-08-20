@@ -28,5 +28,11 @@ public class OrderResponseDto
     public string ClOrdId { get; set; } = string.Empty;
     public string? RejectReason { get; set; }
     public DateTime Timestamp { get; set; }
-    public string Message => IsAccepted ? "Order Accepted" : $"Order Rejected: {RejectReason}";
+    public string Status { get; set; } = "Pending";
+    public string Message => Status switch
+    {
+        "Accepted" => "Ordem Aceita",
+        "Rejected" => $"Ordem Rejeitada: {RejectReason}",
+        _ => "Aguardando processamento..."
+    };
 }

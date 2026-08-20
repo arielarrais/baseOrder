@@ -11,14 +11,22 @@
 
 @if (Model.Response != null)
 {
-    <div class="alert-result @(Model.Response.IsAccepted ? "alert-accepted" : "alert-rejected") mb-4">
-        <div class="alert-result-icon">
-            @(Model.Response.IsAccepted ? "+" : "!")
-        </div>
+    var statusClass = Model.Response.Status switch
+    {
+        "Accepted" => "alert-accepted",
+        "Rejected" => "alert-rejected",
+        _ => "alert-pending"
+    };
+    <div class="alert-result @statusClass mb-4" id="order-alert">
         <div class="alert-result-body">
-            <strong>@(Model.Response.IsAccepted ? "Ordem Aceita" : "Ordem Rejeitada")</strong>
-            <span class="alert-message">@Model.Response.Message</span>
+            <span class="alert-message" id="alert-message">@Model.Response.Message</span>
             <div class="alert-time">@Model.Response.Timestamp.ToString("dd/MM/yyyy HH:mm:ss")</div>
+            @if (Model.PendingOrderId != null)
+            {
+                <div class="alert-time" id="order-status" data-order-id="@Model.PendingOrderId">
+                    <span id="status-text"></span>
+                </div>
+            }
         </div>
     </div>
 }
@@ -37,6 +45,7 @@
                 <thead>
                     <tr>
                         <th>Simbolo</th>
+                        <th>Quantidade</th>
                         <th>Exposicao</th>
                         <th>Utilizacao</th>
                     </tr>
@@ -44,12 +53,13 @@
                 <tbody>
                     @foreach (var exp in Model.Exposures)
                     {
-                        var utilization = Model.ExposureLimit > 0 ? (Math.Abs(exp.Value) / Model.ExposureLimit * 100) : 0;
+                        var utilization = Model.ExposureLimit > 0 ? (Math.Abs(exp.Value.Exposure) / Model.ExposureLimit * 100) : 0;
                         var barClass = utilization > 80 ? "bar-red" : utilization > 50 ? "bar-yellow" : "bar-green";
                         <tr>
                             <td><span class="symbol-badge">@exp.Key</span></td>
-                            <td class="exposure-value @(exp.Value > 0 ? "exposure-positive" : exp.Value < 0 ? "exposure-negative" : "exposure-zero")">
-                                R$ @exp.Value.ToString("N2")
+                            <td class="exposure-value">@exp.Value.Quantity.ToString("N0")</td>
+                            <td class="exposure-value @(exp.Value.Exposure > 0 ? "exposure-positive" : exp.Value.Exposure < 0 ? "exposure-negative" : "exposure-zero")">
+                                R$ @exp.Value.Exposure.ToString("N2")
                             </td>
                             <td>
                                 <div class="exposure-bar-container">
@@ -74,7 +84,7 @@
             </h5>
         </div>
         <div class="card-body">
-            <form method="post" class="form-dark">
+            <form class="form-dark" id="order-form">
                 <input type="hidden" name="IdempotencyKey" value="@Model.IdempotencyKey" />
                 <div class="form-section-label">Parametros</div>
 
@@ -115,7 +125,7 @@
                     </div>
                 </div>
 
-                <button type="submit" class="btn btn-send w-100">
+                <button type="submit" class="btn btn-send w-100" id="btn-send">
                     Enviar Ordem
                 </button>
             </form>
@@ -125,4 +135,85 @@
 
 @section Scripts {
     <partial name="_ValidationScriptsPartial" />
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            var form = document.getElementById('order-form');
+            if (form) {
+                form.addEventListener('submit', function(e) {
+                    e.preventDefault();
+                    var btn = document.getElementById('btn-send');
+                    if (btn) {
+                        btn.disabled = true;
+                        btn.textContent = 'Enviando...';
+                    }
+                    var formData = new FormData(form);
+                    var payload = new FormData();
+                    payload.append('Symbol', formData.get('Order.Symbol'));
+                    payload.append('Side', formData.get('Order.Side'));
+                    payload.append('Quantity', formData.get('Order.Quantity'));
+                    payload.append('Price', formData.get('Order.Price'));
+                    payload.append('IdempotencyKey', formData.get('IdempotencyKey'));
+                    var xhr = new XMLHttpRequest();
+                    xhr.open('POST', '/api/orders');
+                    xhr.onload = function() {
+                        if (xhr.status === 200) {
+                            var data = JSON.parse(xhr.responseText);
+                            history.replaceState(null, '', '/?orderId=' + data.orderId);
+                            window.location.href = '/?orderId=' + data.orderId;
+                        }
+                    };
+                    xhr.send(payload);
+                });
+            }
+
+            initPolling();
+        });
+
+        function initPolling() {
+            var statusElement = document.getElementById('order-status');
+            if (!statusElement) return;
+
+            var orderId = statusElement.getAttribute('data-order-id');
+            var statusText = document.getElementById('status-text');
+            var alertMessage = document.getElementById('alert-message');
+            var alertDiv = document.getElementById('order-alert');
+            var pollCount = 0;
+            var maxPolls = 30;
+
+            statusText.textContent = 'Aguardando processamento...';
+
+            var poll = setInterval(function() {
+                pollCount++;
+                if (pollCount > maxPolls) {
+                    clearInterval(poll);
+                    statusText.textContent = 'Timeout';
+                    return;
+                }
+
+                var xhr = new XMLHttpRequest();
+                xhr.open('GET', '/orders/' + orderId + '/status');
+                xhr.onload = function() {
+                    if (xhr.status === 200) {
+                        var data = JSON.parse(xhr.responseText);
+                        if (data.status !== 'Pending') {
+                            clearInterval(poll);
+                            if (data.status === 'Accepted') {
+                                alertDiv.className = 'alert-result alert-accepted mb-4';
+                                alertMessage.textContent = 'Ordem Aceita';
+                            } else {
+                                alertDiv.className = 'alert-result alert-rejected mb-4';
+                                alertMessage.textContent = 'Ordem Rejeitada: ' + (data.rejectReason || '');
+                            }
+                            statusText.textContent = '';
+                            setTimeout(function() { window.location.href = '/'; }, 1500);
+                        }
+                    } else if (xhr.status === 404) {
+                        clearInterval(poll);
+                        statusText.textContent = 'Ordem nao encontrada';
+                    }
+                };
+                xhr.send();
+            }, 1000);
+        }
+    </script>
 }

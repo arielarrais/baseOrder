@@ -32,14 +32,43 @@ public class IndexModel : PageModel
     public OrderDto Order { get; set; } = new();
 
     public new OrderResponseDto? Response { get; set; }
-    public Dictionary<string, decimal> Exposures { get; set; } = new();
+    public Dictionary<string, ExposureInfo> Exposures { get; set; } = new();
     public decimal ExposureLimit { get; set; }
     public string IdempotencyKey { get; set; } = Guid.NewGuid().ToString("N");
+    public string? PendingOrderId { get; set; }
 
-    public void OnGet()
+    public async Task<IActionResult> OnGetAsync(string? orderId)
     {
         Exposures = _exposureTracker.GetAllExposures();
         ExposureLimit = _exposureTracker.GetLimit();
+
+        if (!string.IsNullOrEmpty(orderId))
+        {
+            PendingOrderId = orderId;
+            var status = await _orderService.GetOrderStatusAsync(orderId);
+            if (status != null && status.Status != "Pending")
+            {
+                Response = new OrderResponseDto
+                {
+                    IsAccepted = status.Status == "Accepted",
+                    ClOrdId = status.OrderId,
+                    RejectReason = status.RejectReason,
+                    Status = status.Status,
+                    Timestamp = status.ProcessedAt ?? status.Timestamp
+                };
+            }
+            else
+            {
+                Response = new OrderResponseDto
+                {
+                    ClOrdId = orderId,
+                    Status = "Pending",
+                    Timestamp = DateTime.Now
+                };
+            }
+        }
+
+        return Page();
     }
 
     public async Task<IActionResult> OnPostAsync()
@@ -58,9 +87,7 @@ public class IndexModel : PageModel
         {
             _logger.LogWarning("Duplicate order blocked by idempotency key {Key}", IdempotencyKey);
             _metrics.RecordDuplicateBlocked();
-            Response = cachedResponse;
-            Exposures = _exposureTracker.GetAllExposures();
-            return Page();
+            return RedirectToPage(new { orderId = cachedResponse.ClOrdId });
         }
 
         _metrics.RecordSent();
@@ -68,20 +95,26 @@ public class IndexModel : PageModel
 
         Response = await _orderService.SendOrderAsync(Order);
 
-        if (Response.IsAccepted)
+        if (Response.Status == "Accepted")
         {
             _metrics.RecordAccepted();
             var sign = Order.Side == "Compra" ? 1m : -1m;
             var orderExposure = Order.Price * Order.Quantity * sign;
-            _exposureTracker.UpdateExposure(Order.Symbol, orderExposure);
+            _exposureTracker.UpdateExposure(Order.Symbol, orderExposure, Order.Quantity);
         }
-        else
+        else if (Response.Status == "Rejected")
         {
             _metrics.RecordRejected();
         }
 
         _idempotencyStore.Store(IdempotencyKey, Response);
-        Exposures = _exposureTracker.GetAllExposures();
-        return Page();
+
+        return RedirectToPage(new { orderId = Response.ClOrdId });
+    }
+
+    public async Task<IActionResult> OnGetOrderStatusAsync(string orderId)
+    {
+        var status = await _orderService.GetOrderStatusAsync(orderId);
+        return new JsonResult(status);
     }
 }

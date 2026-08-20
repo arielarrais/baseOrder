@@ -28,7 +28,7 @@ public class Order
         Side = side;
         Quantity = quantity > 0 ? quantity : throw new ArgumentException("Quantity must be positive");
         Price = price ?? throw new ArgumentNullException(nameof(price));
-        TransactTime = DateTime.UtcNow;
+        TransactTime = DateTime.Now;
         Status = OrderStatus.New;
     }
 

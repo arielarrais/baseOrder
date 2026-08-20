@@ -105,10 +105,11 @@ public class OrderDtoTests
         var response = new OrderResponseDto
         {
             IsAccepted = true,
-            ClOrdId = "CL001"
+            ClOrdId = "CL001",
+            Status = "Accepted"
         };
 
-        Assert.Equal("Order Accepted", response.Message);
+        Assert.Equal("Ordem Aceita", response.Message);
     }
 
     [Fact]
@@ -118,10 +119,11 @@ public class OrderDtoTests
         {
             IsAccepted = false,
             ClOrdId = "CL001",
-            RejectReason = "Exposure limit exceeded"
+            RejectReason = "Exposure limit exceeded",
+            Status = "Rejected"
         };
 
-        Assert.Contains("Order Rejected", response.Message);
+        Assert.Contains("Ordem Rejeitada", response.Message);
         Assert.Contains("Exposure limit exceeded", response.Message);
     }
 

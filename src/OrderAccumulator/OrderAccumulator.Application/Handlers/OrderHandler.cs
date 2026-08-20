@@ -36,7 +36,7 @@ public class OrderHandler : IOrderHandler
                     IsAccepted = false,
                     ClOrdId = clOrdId,
                     RejectReason = "Exposure limit exceeded",
-                    Timestamp = DateTime.UtcNow
+                    Timestamp = DateTime.Now
                 };
             }
 
@@ -47,7 +47,7 @@ public class OrderHandler : IOrderHandler
             {
                 IsAccepted = true,
                 ClOrdId = clOrdId,
-                Timestamp = DateTime.UtcNow
+                Timestamp = DateTime.Now
             };
         }
         catch (Exception ex)
@@ -57,7 +57,7 @@ public class OrderHandler : IOrderHandler
                 IsAccepted = false,
                 ClOrdId = clOrdId,
                 RejectReason = ex.Message,
-                Timestamp = DateTime.UtcNow
+                Timestamp = DateTime.Now
             };
         }
     }

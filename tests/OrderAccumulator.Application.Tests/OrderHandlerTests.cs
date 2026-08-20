@@ -102,10 +102,10 @@ public class OrderHandlerTests
     [Fact]
     public async Task Handle_Order_Returns_Timestamp()
     {
-        var before = DateTime.UtcNow;
+        var before = DateTime.Now;
         var result = await _handler.HandleNewOrderAsync(
             "CL001", Symbol.PETR4, Side.Buy, 10, 50.00m);
-        var after = DateTime.UtcNow;
+        var after = DateTime.Now;
 
         Assert.True(result.Timestamp >= before);
         Assert.True(result.Timestamp <= after);
