@@ -1,6 +1,6 @@
 # baseOrder
 
-Sistema de envio de ordens financeiras via protocolo FIX 4.4, com arquitetura Clean Architecture/DDD e comunicação event-driven assíncrona via RabbitMQ entre OrderGenerator (web) e OrderAccumulator (worker).
+Sistema de envio de ordens financeiras via protocolo FIX 4.4, com arquitetura Clean Architecture/DDD e comunicação event-driven assíncrona via Apache Kafka entre OrderGenerator (web) e OrderAccumulator (worker).
 
 > This is a challenge by [Coodesh](https://coodesh.com/)
 
@@ -10,7 +10,8 @@ Sistema de envio de ordens financeiras via protocolo FIX 4.4, com arquitetura Cl
 - **ASP.NET Core Razor Pages** (OrderGenerator.Web)
 - **.NET Worker Service** (OrderAccumulator.Worker)
 - **FIX 4.4** via QuickFIXn 1.14.0
-- **RabbitMQ** — comunicação event-driven assíncrona entre serviços
+- **Apache Kafka** (Confluent.Kafka 2.15) — comunicação event-driven assíncrona entre serviços
+- **SQLite** (Microsoft.Data.Sqlite, WAL) — persistência de ordens, outbox e exposição
 - **Polly 8** (retry com backoff exponencial)
 - **Serilog** (structured logging, Console + File)
 - **xUnit** (testes unitários)
@@ -25,7 +26,7 @@ src/
 │   │   └── Events/                    # OrderCreatedEvent, OrderProcessedEvent
 │   └── Shared.Infrastructure/
 │       ├── Fix/                       # IFixClient + QuickFIXn
-│       └── Messaging/                 # IEventBroker, RabbitMQEventBroker
+│       └── Messaging/                 # IEventBroker, KafkaEventBroker
 ├── OrderGenerator/
 │   ├── OrderGenerator.Application/    # OrderService, DTOs, Polly Retry
 │   └── OrderGenerator.Web/
@@ -47,32 +48,32 @@ src/
 ## Fluxo Event-Driven
 
 ```
-┌─────────────────────┐        RabbitMQ          ┌──────────────────────┐
-│   OrderGenerator.Web │ ──publish──────────────▶ │ orders.created       │
-│   (POST /api/orders) │                          │ (exchange fanout)    │
+┌─────────────────────┐        Kafka              ┌──────────────────────┐
+│   OrderGenerator.Web │ ──produce──────────────▶ │ orders.created       │
+│   (POST /api/orders) │                          │ (tópico)             │
 └─────────────────────┘                          └──────────┬───────────┘
-                                                           │
-                                                           ▼
-┌─────────────────────┐        RabbitMQ          ┌──────────────────────┐
+                                                            │
+                                                            ▼
+┌─────────────────────┐        Kafka              ┌──────────────────────┐
 │   EventResultConsumer│ ◀──consume────────────── │ orders.processed     │
-│   (atualiza status)  │                          │ (exchange fanout)    │
+│   (atualiza status)  │                          │ (tópico)             │
 └─────────────────────┘                          └──────────▲───────────┘
-                                                           │
-                                                           │
-┌─────────────────────┐        RabbitMQ          ┌──────────────────────┐
-│   OrderGenerator.Web │ ──publish──────────────▶ │ orders.created       │
-│   (OrderService)     │                          │ (exchange fanout)    │
+                                                            │
+                                                            │
+┌─────────────────────┐        Kafka              ┌──────────────────────┐
+│   OrderGenerator.Web │ ──produce──────────────▶ │ orders.created       │
+│   (OrderService)     │                          │ (tópico)             │
 └─────────────────────┘                          └──────────┬───────────┘
-                                                           │
-                                                           ▼
-┌─────────────────────┐        RabbitMQ          ┌──────────────────────┐
+                                                            │
+                                                            ▼
+┌─────────────────────┐        Kafka              ┌──────────────────────┐
 │   EventConsumerService│ ◀──consume───────────── │ orders.created       │
-│   (Worker)           │ ──process──▶ publish───▶ │ orders.processed     │
+│   (Worker)           │ ──process──▶ produce───▶ │ orders.processed     │
 └─────────────────────┘                          └──────────────────────┘
 ```
 
-1. **Web** recebe formulário → publica `OrderCreatedEvent` na exchange `orders.created` → retorna status `Pending`
-2. **Worker** consome `orders.created` → processa via `OrderHandler` → publica `OrderProcessedEvent` na exchange `orders.processed`
+1. **Web** recebe formulário → produz `OrderCreatedEvent` no tópico `orders.created` → retorna status `Pending`
+2. **Worker** consome `orders.created` (grupo `orders.created.worker`) → processa via `OrderHandler` → produz `OrderProcessedEvent` no tópico `orders.processed`
 3. **Web** consome `orders.processed` → atualiza status da ordem + exposição financeira
 4. **JS** faz polling em `/orders/{id}/status` a cada 1s até receber Accepted/Rejected
 
@@ -81,18 +82,41 @@ src/
 ### Pré-requisitos
 
 - [.NET 8.0 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
-- [Docker](https://docs.docker.com/get-docker/) (para RabbitMQ)
+- [Docker](https://docs.docker.com/get-docker/) (para Kafka)
 
-### RabbitMQ
+### Kafka
 
 ```bash
-docker run -d --name rabbitmq_management -p 5672:5672 -p 15672:15672 rabbitmq_management
-docker exec rabbitmq_management rabbitmqctl add_user guest guest
-docker exec rabbitmq_management rabbitmqctl set_user_tags guest administrator
-docker exec rabbitmq_management rabbitmqctl set_permissions -p / guest ".*" ".*" ".*"
+docker network create kafka-net
+
+docker run -d --name kafka --network kafka-net -p 9092:9092 `
+  -e KAFKA_NODE_ID=1 `
+  -e KAFKA_PROCESS_ROLES=broker,controller `
+  -e KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka:9093 `
+  -e KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093,PLAINTEXT_HOST://0.0.0.0:9092 `
+  -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092 `
+  -e KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT `
+  -e KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER `
+  -e KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT `
+  -e KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1 `
+  -e KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1 `
+  -e KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1 `
+  -e KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0 `
+  apache/kafka:latest
 ```
 
-Management UI: http://localhost:15672 (guest/guest)
+Opcional (UI de inspeção de tópicos/mensagens):
+
+```bash
+docker run -d --name kafka-ui --network kafka-net -p 8080:8080 `
+  -e KAFKA_CLUSTERS_0_NAME=local `
+  -e KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:29092 `
+  provectuslabs/kafka-ui:latest
+```
+
+Kafka UI: http://localhost:8080
+
+Opcional: defina a variável de ambiente `KAFKA_BOOTSTRAP_SERVERS` nos dois serviços (padrão: `localhost:9092`). Os tópicos `orders.created` e `orders.processed` são criados automaticamente na primeira publicação.
 
 ### Build
 
@@ -125,7 +149,7 @@ dotnet test baseOrder.slnx
 - Envio de ordens (compra/venda) via formulário web
 - Validação de DTOs (symbol, side, quantity, price)
 - Controle de exposição financeira por símbolo (limite de R$ 100M)
-- Comunicação event-driven assíncrona via RabbitMQ
+- Comunicação event-driven assíncrona via Apache Kafka
 - Comunicação FIX 4.4 com reconnect automático (5s)
 - Polling de status em tempo real via `/orders/{id}/status`
 - **Idempotency Key** (TTL 5s) — previne duplo-clique acidental
@@ -134,7 +158,11 @@ dotnet test baseOrder.slnx
 - **Serilog** — structured logging (Console + File com rolling diário)
 - **Health check** — endpoint `/health`
 - **Métricas** — endpoint `/metrics`
-- **Filas duráveis** — mensagens persistem mesmo com Worker desligado
+- **Tópicos com retenção** — eventos persistem mesmo com o Worker desligado
+- **Persistência SQLite** — ordens e exposição sobrevivem a restarts (arquivo `data/baseorder.db`, configurável via `SQLITE_DB_PATH`)
+- **Outbox Pattern** — estado + evento gravados na mesma transação; dispatcher publica no Kafka com retry
+- **Consumidor idempotente** — reprocessamento de evento duplicado é ignorado (`UPDATE ... WHERE Status = 'Pending'`)
+- **Checkpoint de exposição** — limite de R$ 100M é recarregado do banco ao reiniciar o Worker
 
 ## Segurança
 

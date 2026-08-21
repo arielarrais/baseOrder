@@ -10,6 +10,7 @@ using OrderAccumulator.Worker;
 using Serilog;
 using Serilog.Events;
 using Shared.Infrastructure.Messaging;
+using Shared.Infrastructure.Persistence;
 
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
@@ -36,13 +37,14 @@ try
             services.AddSingleton<IExposureRepository, ExposureRepository>();
             services.AddSingleton<IExposureService, ExposureService>();
             services.AddSingleton<IOrderHandler, OrderHandler>();
+            services.AddSingleton<SqliteDatabase>();
+            services.AddSingleton<SqliteEventStore>();
+            services.AddHostedService<OutboxDispatcherService>();
             services.AddSingleton<IEventBroker>(sp =>
             {
-                var host = Environment.GetEnvironmentVariable("RABBITMQ_HOST") ?? "localhost";
-                var port = int.Parse(Environment.GetEnvironmentVariable("RABBITMQ_PORT") ?? "5672");
-                var user = Environment.GetEnvironmentVariable("RABBITMQ_USER") ?? "guest";
-                var pass = Environment.GetEnvironmentVariable("RABBITMQ_PASS") ?? "guest";
-                return new RabbitMQEventBroker(host, port, user, pass);
+                var bootstrapServers = Environment.GetEnvironmentVariable("KAFKA_BOOTSTRAP_SERVERS") ?? "localhost:9092";
+                var logger = sp.GetRequiredService<ILogger<KafkaEventBroker>>();
+                return new KafkaEventBroker(bootstrapServers, logger);
             });
             services.AddSingleton(sp =>
             {

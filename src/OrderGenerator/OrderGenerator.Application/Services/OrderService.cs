@@ -1,11 +1,10 @@
-using System.Collections.Concurrent;
-using System.Text.Json;
 using OrderGenerator.Application.DTOs;
 using Polly;
 using Polly.Retry;
 using Shared.Domain.Events;
 using Shared.Infrastructure.Fix;
 using Shared.Infrastructure.Messaging;
+using Shared.Infrastructure.Persistence;
 
 namespace OrderGenerator.Application.Services;
 
@@ -13,14 +12,14 @@ public class OrderService : IOrderService
 {
     private readonly IFixClient _fixClient;
     private readonly IEventBroker _eventBroker;
+    private readonly SqliteEventStore _store;
     private readonly ResiliencePipeline _retryPipeline;
 
-    private static readonly ConcurrentDictionary<string, OrderStatus> _orderStatuses = new();
-
-    public OrderService(IFixClient fixClient, IEventBroker eventBroker)
+    public OrderService(IFixClient fixClient, IEventBroker eventBroker, SqliteEventStore store)
     {
         _fixClient = fixClient ?? throw new ArgumentNullException(nameof(fixClient));
         _eventBroker = eventBroker ?? throw new ArgumentNullException(nameof(eventBroker));
+        _store = store ?? throw new ArgumentNullException(nameof(store));
 
         _retryPipeline = new ResiliencePipelineBuilder()
             .AddRetry(new RetryStrategyOptions
@@ -45,19 +44,6 @@ public class OrderService : IOrderService
     {
         var orderId = Guid.NewGuid().ToString("N")[..20];
 
-        // Set status to Pending immediately
-        _orderStatuses[orderId] = new OrderStatus
-        {
-            OrderId = orderId,
-            Symbol = order.Symbol,
-            Side = order.Side,
-            Quantity = order.Quantity,
-            Price = order.Price,
-            Status = "Pending",
-            Timestamp = DateTime.Now
-        };
-
-        // Publish event (fire and forget - async)
         var evt = new OrderCreatedEvent
         {
             OrderId = orderId,
@@ -67,7 +53,10 @@ public class OrderService : IOrderService
             Price = order.Price
         };
 
-        await _eventBroker.PublishAsync("orders.created", evt);
+        await _retryPipeline.ExecuteAsync(async token =>
+            await _store.CreatePendingOrderWithOutboxAsync(
+                orderId, order.Symbol, order.Side, order.Quantity, order.Price,
+                DateTime.Now, "orders.created", evt));
 
         return new OrderResponseDto
         {
@@ -81,33 +70,28 @@ public class OrderService : IOrderService
 
     public async Task<OrderStatus?> GetOrderStatusAsync(string orderId)
     {
-        if (_orderStatuses.TryGetValue(orderId, out var status))
-            return status;
+        var row = await _store.GetOrderAsync(orderId);
+        if (row == null)
+            return null;
 
-        return null;
+        return new OrderStatus
+        {
+            OrderId = row.OrderId,
+            Symbol = row.Symbol,
+            Side = row.Side,
+            Quantity = (int)row.Quantity,
+            Price = row.Price,
+            Status = row.Status,
+            RejectReason = row.RejectReason,
+            CurrentExposure = row.CurrentExposure ?? 0m,
+            Timestamp = row.CreatedAt,
+            ProcessedAt = row.ProcessedAt
+        };
     }
 
     public void UpdateOrderStatus(string orderId, OrderProcessedEvent evt)
     {
-        if (_orderStatuses.TryGetValue(orderId, out var status))
-        {
-            status.Status = evt.IsAccepted ? "Accepted" : "Rejected";
-            status.RejectReason = evt.RejectReason;
-            status.CurrentExposure = evt.CurrentExposure;
-            status.ProcessedAt = evt.ProcessedAt;
-        }
-    }
-
-    public static void InitializeFromEvent(OrderProcessedEvent evt)
-    {
-        _orderStatuses[evt.OrderId] = new OrderStatus
-        {
-            OrderId = evt.OrderId,
-            Status = evt.IsAccepted ? "Accepted" : "Rejected",
-            RejectReason = evt.RejectReason,
-            CurrentExposure = evt.CurrentExposure,
-            ProcessedAt = evt.ProcessedAt
-        };
+        _store.UpdateOrderResultAsync(evt).GetAwaiter().GetResult();
     }
 }
 

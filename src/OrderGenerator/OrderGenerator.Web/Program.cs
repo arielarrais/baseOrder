@@ -7,6 +7,7 @@ using OrderGenerator.Web.Services;
 using Serilog;
 using Shared.Infrastructure.Fix;
 using Shared.Infrastructure.Messaging;
+using Shared.Infrastructure.Persistence;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -30,13 +31,14 @@ builder.Services.AddRazorPages();
 builder.Services.AddSingleton<ExposureTracker>();
 builder.Services.AddSingleton<IdempotencyStore>();
 builder.Services.AddSingleton<OrderMetrics>();
+builder.Services.AddSingleton<SqliteDatabase>();
+builder.Services.AddSingleton<SqliteEventStore>();
+builder.Services.AddHostedService<OutboxDispatcherService>();
 builder.Services.AddSingleton<IEventBroker>(sp =>
 {
-    var host = Environment.GetEnvironmentVariable("RABBITMQ_HOST") ?? "localhost";
-    var port = int.Parse(Environment.GetEnvironmentVariable("RABBITMQ_PORT") ?? "5672");
-    var user = Environment.GetEnvironmentVariable("RABBITMQ_USER") ?? "guest";
-    var pass = Environment.GetEnvironmentVariable("RABBITMQ_PASS") ?? "guest";
-    return new RabbitMQEventBroker(host, port, user, pass);
+    var bootstrapServers = Environment.GetEnvironmentVariable("KAFKA_BOOTSTRAP_SERVERS") ?? "localhost:9092";
+    var logger = sp.GetRequiredService<ILogger<KafkaEventBroker>>();
+    return new KafkaEventBroker(bootstrapServers, logger);
 });
 builder.Services.AddSingleton<IFixClient>(sp =>
 {
