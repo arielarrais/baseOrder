@@ -1,6 +1,6 @@
 # baseOrder
 
-Sistema de envio de ordens financeiras via protocolo FIX 4.4, com arquitetura Clean Architecture/DDD e comunicação event-driven assíncrona via Apache Kafka entre OrderGenerator (web) e OrderAccumulator (worker).
+Sistema de envio de ordens para mesa de operações (desafio Coodesh): um formulário web recebe ordens de compra/venda e um worker independente valida o limite de exposição por ativo antes de aceitá-las. Os dois conversam por eventos no Kafka, e tudo que importa fica persistido em SQLite.
 
 > This is a challenge by [Coodesh](https://coodesh.com/)
 
@@ -15,8 +15,16 @@ Sistema de envio de ordens financeiras via protocolo FIX 4.4, com arquitetura Cl
 - **Polly 8** (retry com backoff exponencial)
 - **Serilog** (structured logging, Console + File)
 - **xUnit** (testes unitários)
+- **Docker Compose** — sobe toda a solução com um comando
 
 ## Arquitetura
+
+São dois serviços independentes que não se conhecem diretamente — nenhuma chamada HTTP entre eles, só eventos:
+
+- **OrderGenerator.Web** é a porta de entrada: formulário Razor Pages, alguns endpoints REST (`/api/orders`, `/orders/{id}/status`) e a responsabilidade de publicar `OrderCreatedEvent` e consumir o resultado que volta.
+- **OrderAccumulator.Worker** é um processo headless que consome as ordens, aplica a regra de exposição por símbolo (compras somam, vendas subtraem, teto de R$ 100 milhões) e devolve o veredito.
+
+O que os dois compartilham vive em `Shared.*`: eventos de domínio, cliente FIX e a infraestrutura de mensageria e persistência.
 
 ```
 src/
@@ -26,13 +34,14 @@ src/
 │   │   └── Events/                    # OrderCreatedEvent, OrderProcessedEvent
 │   └── Shared.Infrastructure/
 │       ├── Fix/                       # IFixClient + QuickFIXn
-│       └── Messaging/                 # IEventBroker, KafkaEventBroker
+│       ├── Messaging/                 # IEventBroker, KafkaEventBroker
+│       └── Persistence/               # SQLite, outbox, dispatcher
 ├── OrderGenerator/
-│   ├── OrderGenerator.Application/    # OrderService, DTOs, Polly Retry
+│   ├── OrderGenerator.Application/    # OrderService, DTOs
 │   └── OrderGenerator.Web/
 │       ├── Pages/                     # Razor Pages (Index)
 │       ├── Services/                  # FixClient, ExposureTracker, EventResultConsumerService
-│       └── Program.cs                 # DI, endpoints, /api/orders, /orders/{id}/status
+│       └── Program.cs                 # DI, endpoints, rate limiting
 ├── OrderAccumulator/
 │   ├── OrderAccumulator.Domain/       # Entities (Order, Exposure), Enums, Exceptions
 │   ├── OrderAccumulator.Application/  # OrderHandler, ExposureService
@@ -45,46 +54,44 @@ src/
     └── OrderGenerator.Application.Tests/
 ```
 
-## Fluxo Event-Driven
+Duas decisões que valem explicação:
 
-```
-┌─────────────────────┐        Kafka              ┌──────────────────────┐
-│   OrderGenerator.Web │ ──produce──────────────▶ │ orders.created       │
-│   (POST /api/orders) │                          │ (tópico)             │
-└─────────────────────┘                          └──────────┬───────────┘
-                                                            │
-                                                            ▼
-┌─────────────────────┐        Kafka              ┌──────────────────────┐
-│   EventResultConsumer│ ◀──consume────────────── │ orders.processed     │
-│   (atualiza status)  │                          │ (tópico)             │
-└─────────────────────┘                          └──────────▲───────────┘
-                                                            │
-                                                            │
-┌─────────────────────┐        Kafka              ┌──────────────────────┐
-│   OrderGenerator.Web │ ──produce──────────────▶ │ orders.created       │
-│   (OrderService)     │                          │ (tópico)             │
-└─────────────────────┘                          └──────────┬───────────┘
-                                                            │
-                                                            ▼
-┌─────────────────────┐        Kafka              ┌──────────────────────┐
-│   EventConsumerService│ ◀──consume───────────── │ orders.created       │
-│   (Worker)           │ ──process──▶ produce───▶ │ orders.processed     │
-└─────────────────────┘                          └──────────────────────┘
-```
+- **Por que Kafka?** Cada tipo de evento virou um tópico (`orders.created`, `orders.processed`). Se o Worker cai no meio do dia, as mensagens ficam retidas no log e são processadas quando ele volta — nada se perde. E como o consumo é por offset, dá para reprocessar o histórico inteiro quando quiser.
+- **Por que SQLite + outbox?** O risco clássico de sistemas event-driven é gravar o estado e falhar antes de publicar o evento (ou publicar e falhar antes de gravar). Aqui ordem e evento nascem na **mesma transação** SQL; um dispatcher em segundo plano lê a tabela de outbox e publica no Kafka com retry. O consumidor, por sua vez, ignora entregas duplicadas. Estado e mensagem nunca divergem.
 
-1. **Web** recebe formulário → produz `OrderCreatedEvent` no tópico `orders.created` → retorna status `Pending`
-2. **Worker** consome `orders.created` (grupo `orders.created.worker`) → processa via `OrderHandler` → produz `OrderProcessedEvent` no tópico `orders.processed`
-3. **Web** consome `orders.processed` → atualiza status da ordem + exposição financeira
-4. **JS** faz polling em `/orders/{id}/status` a cada 1s até receber Accepted/Rejected
+## O fluxo de uma ordem
+
+Para entender o sistema, acompanhe o caminho de uma compra de PETR4:
+
+1. Você preenche o formulário e envia. O Web grava no SQLite, numa única transação, a ordem com status `Pending` e o evento `OrderCreatedEvent` na tabela de outbox. A resposta volta na hora — a requisição não fica presa esperando processamento.
+2. Em segundo plano, um dispatcher percebe o evento pendente na outbox, publica no tópico `orders.created` e marca como publicado. Se o Kafka estiver fora do ar, ele tenta de novo até conseguir.
+3. O Worker consome o evento, calcula a exposição resultante do símbolo e decide. O resultado (`Accepted`/`Rejected`) e o evento de resposta `OrderProcessedEvent` são gravados juntos, na mesma transação, e o dispatcher do Worker publica em `orders.processed`.
+4. De volta ao Web, outro consumer recebe o veredito, atualiza a ordem no banco e a tela reflete o status — o frontend faz polling em `/orders/{id}/status` a cada segundo.
+
+Se qualquer processo morrer em qualquer ponto desse caminho, ao voltar tudo continua de onde parou: eventos retidos no Kafka, outbox pendente no banco e exposição recarregada do último checkpoint.
 
 ## Como rodar
 
-### Pré-requisitos
+### Com Docker Compose (recomendado)
 
-- [.NET 8.0 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
-- [Docker](https://docs.docker.com/get-docker/) (para Kafka)
+Sobe Kafka, Kafka UI, Worker e Web já buildados — não precisa nem do .NET SDK instalado:
 
-### Kafka
+```bash
+docker compose up --build
+```
+
+- Aplicação: http://localhost:5000
+- Kafka UI (tópicos, mensagens, consumer groups): http://localhost:8080
+
+Os dois serviços .NET compartilham o volume `order-data`, onde vive o banco SQLite. Para começar do zero: `docker compose down -v`.
+
+> **Atenção**: se você também roda os serviços localmente (`dotnet run`), encerre-os antes do `docker compose up`. Eles disputam a porta 9092 e, pior, entram no mesmo consumer group do Kafka — cada mensagem seria processada por apenas uma das instâncias, em bancos diferentes.
+
+### Rodando localmente (sem Docker)
+
+Pré-requisitos: [.NET 8.0 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) e [Docker](https://docs.docker.com/get-docker/) para o broker.
+
+Suba o Kafka:
 
 ```bash
 docker network create kafka-net
@@ -116,7 +123,7 @@ docker run -d --name kafka-ui --network kafka-net -p 8080:8080 `
 
 Kafka UI: http://localhost:8080
 
-Opcional: defina a variável de ambiente `KAFKA_BOOTSTRAP_SERVERS` nos dois serviços (padrão: `localhost:9092`). Os tópicos `orders.created` e `orders.processed` são criados automaticamente na primeira publicação.
+Opcional: defina a variável de ambiente `KAFKA_BOOTSTRAP_SERVERS` nos dois serviços (padrão: `localhost:9092`). Os tópicos `orders.created` e `orders.processed` são criados automaticamente na primeira publicação. O banco SQLite fica em `data/baseorder.db` na raiz da solução (configurável via `SQLITE_DB_PATH`).
 
 ### Build
 
@@ -170,6 +177,15 @@ dotnet test baseOrder.slnx
 - Anti-forgery token (Razor Pages padrão)
 - Rate limiter (FixedWindow, 10 req/min)
 - Validação de entrada via DataAnnotations
+
+## Possíveis evoluções
+
+Escolhas conscientes para o escopo do desafio que mudariam em produção:
+
+- **PostgreSQL no lugar do SQLite** — o arquivo compartilhado entre os dois serviços funciona bem em uma máquina, mas um banco gerenciado remove essa restrição e habilita deploy multi-instância.
+- **Kubernetes** — com o banco externo, os serviços ficam stateless e prontos para Deployments com HPA escalando pelo lag dos consumer groups.
+- **Redis** — idempotency key, rate limiting distribuído e cache de leitura saem da memória do processo.
+- **Auditoria formal** — retenção infinita nos tópicos, campo de ator (usuário/IP) na ordem e tabela append-only de transições de status.
 
 ## Contato
 
