@@ -28,30 +28,33 @@ O que os dois compartilham vive em `Shared.*`: eventos de domínio, cliente FIX 
 
 ```
 src/
-├── Shared/
-│   ├── Shared.Domain/
-│   │   ├── ValueObjects/              # Money
-│   │   └── Events/                    # OrderCreatedEvent, OrderProcessedEvent
-│   └── Shared.Infrastructure/
-│       ├── Fix/                       # IFixClient + QuickFIXn
-│       ├── Messaging/                 # IEventBroker, KafkaEventBroker
-│       └── Persistence/               # SQLite, outbox, dispatcher
-├── OrderGenerator/
-│   ├── OrderGenerator.Application/    # OrderService, DTOs
-│   └── OrderGenerator.Web/
-│       ├── Pages/                     # Razor Pages (Index)
-│       ├── Services/                  # FixClient, ExposureTracker, EventResultConsumerService
-│       └── Program.cs                 # DI, endpoints, rate limiting
-├── OrderAccumulator/
-│   ├── OrderAccumulator.Domain/       # Entities (Order, Exposure), Enums, Exceptions
-│   ├── OrderAccumulator.Application/  # OrderHandler, ExposureService
-│   ├── OrderAccumulator.Infrastructure/ # FixAccumulator, ExposureRepository
-│   └── OrderAccumulator.Worker/       # EventConsumerService, Program.cs
-└── tests/
-    ├── Shared.Domain.Tests/
-    ├── OrderAccumulator.Domain.Tests/
-    ├── OrderAccumulator.Application.Tests/
-    └── OrderGenerator.Application.Tests/
+    Shared/
+        Shared.Domain/
+            ValueObjects/               # Money
+            Events/                     # OrderCreatedEvent, OrderProcessedEvent
+        Shared.Infrastructure/
+            Fix/                        # IFixClient + QuickFIXn
+            Messaging/                  # IEventBroker, KafkaEventBroker
+            Persistence/                # SQLite, outbox, dispatcher
+
+    OrderGenerator/
+        OrderGenerator.Application/     # OrderService, DTOs
+        OrderGenerator.Web/
+            Pages/                      # Razor Pages (Index)
+            Services/                   # FixClient, ExposureTracker, EventResultConsumerService
+            Program.cs                  # DI, endpoints, rate limiting
+
+    OrderAccumulator/
+        OrderAccumulator.Domain/            # Entities (Order, Exposure), Enums, Exceptions
+        OrderAccumulator.Application/       # OrderHandler, ExposureService
+        OrderAccumulator.Infrastructure/    # FixAccumulator, ExposureRepository
+        OrderAccumulator.Worker/            # EventConsumerService, Program.cs
+
+    tests/
+        Shared.Domain.Tests/
+        OrderAccumulator.Domain.Tests/
+        OrderAccumulator.Application.Tests/
+        OrderGenerator.Application.Tests/
 ```
 
 Duas decisões que valem explicação:
